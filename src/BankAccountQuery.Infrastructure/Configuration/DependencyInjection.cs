@@ -68,9 +68,22 @@ public static class DependencyInjection
 
         services.AddScoped<ILoadAccountPort, AccountEfCoreAdapter>();
         services.AddScoped<ILoadTransactionPort, TransactionEfCoreAdapter>();
-        services.AddScoped<ILoadPrivilegePort, PrivilegeEfCoreAdapter>();
-        services.AddScoped<ISavePrivilegePort, PrivilegeEfCoreAdapter>();
         services.AddSingleton<IAuditLogPort, InMemoryAuditLogAdapter>();
+
+        // 優惠的持久化方式可切換：狀態儲存（預設）或事件溯源（opt-in 範例）
+        var privilegePersistence = configuration["Privilege:Persistence"] ?? "StateBased";
+        if (privilegePersistence.Equals("EventSourced", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddScoped<EventSourcedPrivilegeAdapter>();
+            services.AddScoped<ILoadPrivilegePort>(sp => sp.GetRequiredService<EventSourcedPrivilegeAdapter>());
+            services.AddScoped<ISavePrivilegePort>(sp => sp.GetRequiredService<EventSourcedPrivilegeAdapter>());
+        }
+        else
+        {
+            services.AddScoped<PrivilegeEfCoreAdapter>();
+            services.AddScoped<ILoadPrivilegePort>(sp => sp.GetRequiredService<PrivilegeEfCoreAdapter>());
+            services.AddScoped<ISavePrivilegePort>(sp => sp.GetRequiredService<PrivilegeEfCoreAdapter>());
+        }
         return services;
     }
 

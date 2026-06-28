@@ -12,6 +12,7 @@ public sealed class BankDbContext : DbContext
     public DbSet<PrivilegeEntity> Privileges => Set<PrivilegeEntity>();
     public DbSet<PrivilegeUsageEntity> PrivilegeUsages => Set<PrivilegeUsageEntity>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<PrivilegeEventEntity> PrivilegeEvents => Set<PrivilegeEventEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -53,6 +54,12 @@ public sealed class BankDbContext : DbContext
             // OccurredOnUtc / ProcessedOnUtc 皆為 UTC，對應 timestamptz（接受 Kind=Utc）
             e.Property(x => x.OccurredOnUtc).HasColumnType("timestamp with time zone");
             e.Property(x => x.ProcessedOnUtc).HasColumnType("timestamp with time zone");
+        });
+
+        modelBuilder.Entity<PrivilegeEventEntity>(e =>
+        {
+            e.HasKey(x => new { x.StreamId, x.Version });   // 複合主鍵 = 樂觀並行
+            e.Property(x => x.OccurredOnUtc).HasColumnType("timestamp with time zone");
         });
     }
 }

@@ -10,6 +10,12 @@ public abstract class AggregateRoot
 
     public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents.AsReadOnly();
 
+    /// <summary>
+    /// 已套用的事件數（含重播）。事件溯源用於樂觀並行控制：
+    /// 載入時 = 既有事件數；每套用一個事件即 +1。
+    /// </summary>
+    public long Version { get; protected set; }
+
     protected void RaiseDomainEvent(IDomainEvent domainEvent) => _domainEvents.Add(domainEvent);
 
     public void ClearDomainEvents() => _domainEvents.Clear();

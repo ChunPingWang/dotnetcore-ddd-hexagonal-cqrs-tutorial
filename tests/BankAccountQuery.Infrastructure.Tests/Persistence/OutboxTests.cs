@@ -59,7 +59,7 @@ public sealed class OutboxTests
         await using var db = NewDb();
         var (type, content) = DomainEventSerialization.Serialize(new TransferPrivilegeUsedEvent(
             PrivilegeId.Of("P010"), CustomerId.Of("C002"), "U-1",
-            Money.Twd(15m), 4, Today, DateTime.UtcNow));
+            Money.Twd(15m), "跨行轉帳免手續費", 4, Today, DateTime.UtcNow));
         db.OutboxMessages.Add(new OutboxMessage
         {
             Id = Guid.NewGuid().ToString("N"),

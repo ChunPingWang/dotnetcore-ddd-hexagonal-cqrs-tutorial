@@ -76,7 +76,8 @@
 > [查詢循序圖](./docs/diagrams/sequence-diagram.png)、
 > [ER 圖](./docs/diagrams/er-diagram.png)、
 > [使用優惠循序圖](./docs/diagrams/use-privilege-sequence.png)、
-> [Outbox 流程圖](./docs/diagrams/outbox.png)）。
+> [Outbox 流程圖](./docs/diagrams/outbox.png)、
+> [事件溯源](./docs/diagrams/event-sourcing.png)）。
 
 六角形架構把系統畫成一個「六角形」：中間是純粹的業務核心，外面用 Port／Adapter
 跟真實世界（HTTP、資料庫、快取）溝通。左邊是「主動呼叫我們」的（Driving），
@@ -142,9 +143,9 @@ BankAccountQuery/
 │   └── BankAccountQuery.Api/              ← 組合根：Program.cs + appsettings.json
 │
 └── tests/
-    ├── BankAccountQuery.Domain.Tests/         # 純 C# 單元測試（33）
+    ├── BankAccountQuery.Domain.Tests/         # 純 C# 單元測試（37，含事件溯源）
     ├── BankAccountQuery.Application.Tests/     # NSubstitute Mock Port（13）
-    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（18，含 Outbox）
+    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（21，含 Outbox / 事件溯源）
     └── BankAccountQuery.BddTests/              # Reqnroll + Gherkin 情境測試（17）
 ```
 
@@ -194,6 +195,7 @@ classDiagram
     class AggregateRoot {
         <<abstract>>
         +IReadOnlyList~IDomainEvent~ DomainEvents
+        +long Version
         +ClearDomainEvents() void
         #RaiseDomainEvent(IDomainEvent) void
     }
@@ -209,11 +211,21 @@ classDiagram
         +VerifyOwnership(CustomerId) void
         +FilterUsageHistory(DateRange) PrivilegeUsageHistory
         +Use(usageId, Money, desc, DateOnly) PrivilegeUsageRecord
+        +Grant(...)$ TransferPrivilege
+        +Load(history)$ TransferPrivilege
+    }
+    class TransferPrivilegeGrantedEvent {
+        <<DomainEvent・創生>>
+        +PrivilegeId PrivilegeId
+        +CustomerId OwnerId
+        +int TotalQuota
+        +DateTime OccurredOn
     }
     class TransferPrivilegeUsedEvent {
         <<DomainEvent>>
         +PrivilegeId PrivilegeId
         +CustomerId OwnerId
+        +string Description
         +int RemainingQuota
         +DateTime OccurredOn
     }
@@ -255,6 +267,7 @@ classDiagram
     TransferPrivilege "1" *-- "*" PrivilegeUsageRecord
     TransferPrivilege *-- CustomerId
     TransferPrivilege *-- DateRange
+    TransferPrivilege ..> TransferPrivilegeGrantedEvent : Grant() 時發布
     TransferPrivilege ..> TransferPrivilegeUsedEvent : Use() 時發布
     PrivilegeUsageRecord *-- Money
 ```
@@ -491,6 +504,57 @@ flowchart LR
 
 > ⚠️ 目前為單體內的 Outbox（同一資料庫）；尚未把事件再轉發到外部訊息佇列（整合事件）。
 
+### 8.9 Event Sourcing（事件溯源）— 進階 opt-in 範例
+
+前面都是**狀態儲存**：DB 存「現在的樣子」（`Privileges.UsedQuota = 3`）。
+**事件溯源（ES）** 反過來：DB 存「發生過的事」，狀態用**重播**算出來。
+本專案讓 `TransferPrivilege` 同時支援兩種方式，用設定切換、**API 行為完全相同**。
+
+```mermaid
+flowchart LR
+    subgraph S["狀態儲存（預設）"]
+        direction TB
+        S1["Privileges 列<br/>UsedQuota = 3"]
+    end
+    subgraph E["事件溯源（opt-in）"]
+        direction TB
+        E1["Granted(total=10)"] --> E2["Used(15)"] --> E3["Used(15)"] --> E4["Used(30)"]
+        E4 -. "Load() 重播" .-> E5["UsedQuota = 3<br/>（算出來的）"]
+    end
+    S -. "同一個 ILoad/ISavePrivilegePort、同一個 API" .- E
+```
+
+**聚合改成 decide / apply 分離**（同一份 `Use()` 同時服務兩種持久化）：
+```csharp
+public PrivilegeUsageRecord Use(...) {          // decide：只驗證不變量
+    if (!ValidPeriod.Contains(usedDate)) throw new PrivilegeExpiredException(...);
+    if (GetRemainingQuota() <= 0)        throw new PrivilegeQuotaExhaustedException(...);
+    RaiseAndApply(new TransferPrivilegeUsedEvent(...));   // 記錄事件 + apply
+    return _usageRecords[^1];
+}
+private void When(IDomainEvent e) { /* apply：依事件變更狀態 */ ... Version++; }
+public static TransferPrivilege Load(IEnumerable<IDomainEvent> history)  // 重播重建
+    => history.Aggregate(new TransferPrivilege(), (agg, e) => { agg.When(e); return agg; });
+```
+
+關鍵設計：
+- **創生事件** `TransferPrivilegeGrantedEvent`：每個 stream 的第一個事件，建立初始狀態。
+- **Event Store**：`PrivilegeEvents` 表，`(StreamId, Version)` 複合主鍵 = **樂觀並行**
+  （兩個寫入者基於同版本附加 → 主鍵衝突 → `ConcurrencyConflictException` → HTTP 409）。
+- **讀取**：`EventSourcedPrivilegeAdapter` 讀事件流 → `TransferPrivilege.Load(...)`；
+  查詢端（`GetTransferPrivilege`/`Usage`）完全不變，因為一樣走 `ILoadPrivilegePort`。
+- **與 Outbox 互補**：Event Store 是「狀態的事實來源」，Outbox 仍負責對外可靠派發。
+
+**怎麼開啟**（預設為 `StateBased`，故既有測試不受影響）：
+```bash
+Privilege__Persistence=EventSourced dotnet run --project src/BankAccountQuery.Api
+# 種子改以 Grant + Use 產生事件串流；GET/POST 行為與狀態儲存版一致
+```
+
+> ⚠️ 這是**教學示範**：對「免手續費額度」這種領域，ES 其實偏重；且本範例的
+> 「依客戶查詢」用掃描創生事件實作（正式系統應建投影/索引）、也未做快照。
+> 重點在於展示 decide/apply、重播、版本並行與 Event Store，並與狀態儲存對照。
+
 ---
 
 ## 9. API 端點
@@ -519,7 +583,7 @@ flowchart LR
 # 還原 + 建置整個方案
 dotnet build BankAccountQuery.slnx
 
-# 執行全部 81 個測試（Domain 33 / Application 13 / Infrastructure 18 / BDD 17）
+# 執行全部 88 個測試（Domain 37 / Application 13 / Infrastructure 21 / BDD 17）
 dotnet test BankAccountQuery.slnx
 ```
 
@@ -678,7 +742,9 @@ dotnet test tests/BankAccountQuery.BddTests
 - ✅ **Health Checks**：`/health` 含資料庫探針。
 - ✅ **OpenTelemetry + Prometheus**：`/metrics`。
 - ✅ **Transactional Outbox**：領域事件與狀態同一交易寫入，背景處理器可靠派發（§8.8）。
-- ✅ **CI Pipeline（GitHub Actions）**：每次 push／PR 自動 restore／build／test（81 個測試）。
+- ✅ **CI Pipeline（GitHub Actions）**：每次 push／PR 自動 restore／build／test（88 個測試）。
+- ✅ **Event Sourcing（進階 opt-in 範例）**：`TransferPrivilege` 可切換為事件溯源，
+  含創生事件、重播、Event Store、樂觀並行（§8.9）。
 
 **仍未落地**（架構已預留接縫）：
 - **Redis 快取 Decorator**：`PrivilegeCacheAdapter` 包裝 `PrivilegeEfCoreAdapter`。
@@ -689,6 +755,6 @@ dotnet test tests/BankAccountQuery.BddTests
 
 ---
 
-> 🤖 本程式碼庫依教學文件實作並逐層驗證（**81 個測試全數通過**：
-> Domain 33 / Application 13 / Infrastructure 18 / BDD 17）。
+> 🤖 本程式碼庫依教學文件實作並逐層驗證（**88 個測試全數通過**：
+> Domain 37 / Application 13 / Infrastructure 21 / BDD 17）。
 > 歡迎以此為起點，把第 13 節的延伸項目逐一補上。

@@ -30,6 +30,7 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             QueryRangeExceededException              => (422, "QUERY_RANGE_EXCEEDED"),
             InvalidAccountIdFormatException          => (400, "INVALID_ACCOUNT_ID_FORMAT"),
             QueryValidationException                 => (400, "VALIDATION_FAILED"),
+            ConcurrencyConflictException             => (409, "CONCURRENCY_CONFLICT"),
             PrivilegeNotFoundException               => (404, "PRIVILEGE_NOT_FOUND"),
             PrivilegeNotOwnedByCustomerException     => (403, "PRIVILEGE_NOT_OWNED_BY_CUSTOMER"),
             PrivilegeExpiredException                => (422, "PRIVILEGE_EXPIRED"),

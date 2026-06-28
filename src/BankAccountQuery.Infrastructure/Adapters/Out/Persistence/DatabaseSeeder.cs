@@ -10,7 +10,7 @@ namespace BankAccountQuery.Infrastructure.Adapters.Out.Persistence;
 /// </summary>
 public static class DatabaseSeeder
 {
-    public static void Seed(BankDbContext db)
+    public static void Seed(BankDbContext db, bool eventSourcedPrivileges = false)
     {
         if (db.Accounts.Any()) return;
 
@@ -57,7 +57,13 @@ public static class DatabaseSeeder
             Fx("T-FX-002", "00123456789099", TransactionType.Debit, 200m, 6320m,
                 new DateTime(2025, 1, 15), "USD 換匯", TransactionChannel.MobileApp));
 
-        // ── 轉帳優惠（客戶 C001）────────────────────────────────────────
+        // ── 轉帳優惠（依設定：狀態儲存或事件溯源）────────────────────────
+        if (eventSourcedPrivileges)
+        {
+            SeedEventSourcedPrivileges(db);
+        }
+        else
+        {
         db.Privileges.Add(new PrivilegeEntity
         {
             PrivilegeId = "P001", OwnerId = "C001",
@@ -119,8 +125,66 @@ public static class DatabaseSeeder
                 ValidFrom = new DateOnly(2020, 1, 1),
                 ValidTo = new DateOnly(2020, 12, 31)
             });
+        }
 
         db.SaveChanges();
+    }
+
+    // ── 事件溯源版的優惠種子：以 Grant + Use 產生事件串流（同等可觀察狀態）──
+    private static void SeedEventSourcedPrivileges(BankDbContext db)
+    {
+        // P001：核發後使用 3 次（剩餘 7）
+        var p001 = TransferPrivilege.Grant(
+            PrivilegeId.Of("P001"), CustomerId.Of("C001"),
+            PrivilegeType.FeeWaiverInterBank, 10,
+            new DateRange(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31)));
+        p001.Use("U001", Money.Twd(15m), "跨行轉帳免手續費", new DateOnly(2025, 1, 12));
+        p001.Use("U002", Money.Twd(15m), "跨行轉帳免手續費", new DateOnly(2025, 2, 3));
+        p001.Use("U003", Money.Twd(30m), "跨行轉帳免手續費", new DateOnly(2025, 3, 9));
+        AppendStream(db, p001);
+
+        // P999：他人（C999）的優惠 — 僅核發
+        AppendStream(db, TransferPrivilege.Grant(
+            PrivilegeId.Of("P999"), CustomerId.Of("C999"),
+            PrivilegeType.FeeWaiverCrossBorder, 5,
+            new DateRange(new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31))));
+
+        // P010：可正常使用（C002）
+        AppendStream(db, TransferPrivilege.Grant(
+            PrivilegeId.Of("P010"), CustomerId.Of("C002"),
+            PrivilegeType.FeeWaiverInterBank, 5,
+            new DateRange(new DateOnly(2025, 1, 1), new DateOnly(2099, 12, 31))));
+
+        // P012：核發後用盡（剩餘 0）
+        var p012 = TransferPrivilege.Grant(
+            PrivilegeId.Of("P012"), CustomerId.Of("C002"),
+            PrivilegeType.FeeWaiverInterBank, 1,
+            new DateRange(new DateOnly(2025, 1, 1), new DateOnly(2099, 12, 31)));
+        p012.Use("U012", Money.Twd(15m), "跨行轉帳免手續費", DateOnly.FromDateTime(DateTime.UtcNow));
+        AppendStream(db, p012);
+
+        // P013：已過期（C002）— 僅核發
+        AppendStream(db, TransferPrivilege.Grant(
+            PrivilegeId.Of("P013"), CustomerId.Of("C002"),
+            PrivilegeType.FeeWaiverInterBank, 5,
+            new DateRange(new DateOnly(2020, 1, 1), new DateOnly(2020, 12, 31))));
+    }
+
+    private static void AppendStream(BankDbContext db, TransferPrivilege aggregate)
+    {
+        long version = 0;
+        foreach (var domainEvent in aggregate.DomainEvents)
+        {
+            var (type, payload) = Events.DomainEventSerialization.Serialize(domainEvent);
+            db.PrivilegeEvents.Add(new PrivilegeEventEntity
+            {
+                StreamId = aggregate.PrivilegeId.Value,
+                Version = ++version,
+                Type = type,
+                Payload = payload,
+                OccurredOnUtc = domainEvent.OccurredOn
+            });
+        }
     }
 
     private static TransactionEntity Twd(

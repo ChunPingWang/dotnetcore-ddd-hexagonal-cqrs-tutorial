@@ -30,7 +30,9 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<BankDbContext>();
     if (db.Database.IsRelational())
         db.Database.Migrate();
-    DatabaseSeeder.Seed(db);
+    var eventSourcedPrivileges = string.Equals(
+        app.Configuration["Privilege:Persistence"], "EventSourced", StringComparison.OrdinalIgnoreCase);
+    DatabaseSeeder.Seed(db, eventSourcedPrivileges);
 }
 
 app.UseAuthentication();
