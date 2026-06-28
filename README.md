@@ -64,6 +64,13 @@
 
 ## 3. 架構總覽
 
+> 📊 下方所有圖以 Mermaid 撰寫，GitHub 會直接渲染。若你的檢視器不支援，
+> 可改看預先渲染的 PNG：[`docs/diagrams/`](./docs/diagrams/)
+> （[架構](./docs/diagrams/architecture.png)、
+> [類別圖](./docs/diagrams/class-diagram.png)、
+> [循序圖](./docs/diagrams/sequence-diagram.png)、
+> [ER 圖](./docs/diagrams/er-diagram.png)）。
+
 六角形架構把系統畫成一個「六角形」：中間是純粹的業務核心，外面用 Port／Adapter
 跟真實世界（HTTP、資料庫、快取）溝通。左邊是「主動呼叫我們」的（Driving），
 右邊是「被我們呼叫」的（Driven）。
