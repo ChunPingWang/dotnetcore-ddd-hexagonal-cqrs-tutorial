@@ -22,8 +22,9 @@
 8. [設計重點逐項說明](#8-設計重點逐項說明)
 9. [API 端點](#9-api-端點)
 10. [如何執行與測試](#10-如何執行與測試)
-11. [設計決策（ADR 摘要）](#11-設計決策adr-摘要)
-12. [尚未實作的部分](#12-尚未實作的部分)
+11. [BDD 行為驅動開發測試](#11-bdd-行為驅動開發測試)
+12. [設計決策（ADR 摘要）](#12-設計決策adr-摘要)
+13. [尚未實作的部分](#13-尚未實作的部分)
 
 ---
 
@@ -134,7 +135,8 @@ BankAccountQuery/
 └── tests/
     ├── BankAccountQuery.Domain.Tests/         # 純 C# 單元測試（28）
     ├── BankAccountQuery.Application.Tests/     # NSubstitute Mock Port（9）
-    └── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（11）
+    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（11）
+    └── BankAccountQuery.BddTests/              # Reqnroll + Gherkin 情境測試（13）
 ```
 
 > **為什麼 Repository 介面放在「應用層」而不是「領域層」？**
@@ -414,7 +416,7 @@ Logging → Validation → AuditLog → Handler.Handle()
 # 還原 + 建置整個方案
 dotnet build BankAccountQuery.slnx
 
-# 執行全部 48 個測試（Domain 28 / Application 9 / Infrastructure 11）
+# 執行全部 61 個測試（Domain 28 / Application 9 / Infrastructure 11 / BDD 13）
 dotnet test BankAccountQuery.slnx
 ```
 
@@ -447,7 +449,87 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-## 11. 設計決策（ADR 摘要）
+## 11. BDD 行為驅動開發測試
+
+**BDD（Behavior-Driven Development，行為驅動開發）** 用「**人話**」描述系統行為：
+每個情境寫成 **Given（假設前提）→ When（當做了什麼）→ Then（那麼應該如何）**。
+這些情境用 **Gherkin** 語法寫在 `.feature` 檔，**業務人員看得懂、工程師可執行**，
+等於「規格」與「測試」是同一份文件（可執行的活文件，Living Documentation）。
+
+> 🔧 **工具選型**：原教學文件使用 **SpecFlow**，但 SpecFlow 已於 2024 年停止維護。
+> 本專案改用其後繼者 **[Reqnroll](https://reqnroll.net/)**（SpecFlow 的開源接班，API 幾乎相容），
+> 搭配 xUnit 與 `WebApplicationFactory` 對真實 HTTP 端點做黑箱情境測試。
+
+### 11.1 一個情境長什麼樣（繁體中文 Gherkin）
+
+```gherkin
+#language: zh-TW
+功能: 台幣活存帳戶交易紀錄查詢
+
+  背景:
+    假設 已完成身份認證的客戶 "C001"
+
+  場景: 成功查詢指定日期區間的交易紀錄
+    當 查詢帳戶 "00123456789012" 從 "2025-01-01" 到 "2025-01-31" 的台幣交易紀錄
+    那麼 回應狀態碼為 200
+    而且 應回傳 3 筆交易紀錄
+    而且 最近一筆交易類型為 "存入" 金額為 "3,000.00"
+```
+
+對應的 **Step Definition**（把每句中文對應到一段 C# 程式）：
+
+```csharp
+[When(@"查詢帳戶 ""(.*)"" 從 ""(.*)"" 到 ""(.*)"" 的台幣交易紀錄")]
+public Task WhenQueryTwd(string accountId, string startDate, string endDate)
+    => _world.GetAsync(
+        $"/api/v1/accounts/{accountId}/transactions/twd?startDate={startDate}&endDate={endDate}");
+
+[Then(@"回應狀態碼為 (\d+)")]
+public void ThenStatusCodeIs(int expected)
+    => ((int)_world.Response!.StatusCode).Should().Be(expected);
+```
+
+### 11.2 專案結構（`tests/BankAccountQuery.BddTests/`）
+
+```
+BddTests/
+├── Features/                         # Gherkin 情境（活文件）
+│   ├── Account/TwdTransactionHistory.feature
+│   ├── Account/FxTransactionHistory.feature
+│   ├── Privilege/TransferPrivilege.feature
+│   └── Privilege/PrivilegeUsageHistory.feature
+├── Steps/                            # 中文步驟 → C# 實作
+│   ├── CommonSteps.cs                #   認證、狀態碼、錯誤代碼
+│   ├── AccountSteps.cs               #   台幣/外幣查詢
+│   └── PrivilegeSteps.cs             #   優惠查詢
+└── Support/
+    ├── ScenarioWorld.cs              #   每情境共享狀態（HttpClient + 回應）
+    ├── TestHost.cs                   #   共用 WebApplicationFactory
+    └── JwtTestTokenFactory.cs        #   產生測試 JWT
+```
+
+### 11.3 涵蓋的情境（共 13 個）
+
+| Feature | 情境 |
+|---------|------|
+| 台幣交易紀錄 | 成功查詢（含筆數與最近一筆內容）、超過 13 個月、越權、凍結帳戶、參數驗證、未登入 |
+| 外幣交易紀錄 | 成功查詢並顯示台幣等值與匯率、錯誤情境 `場景大綱`（403／422 兩列資料） |
+| 轉帳優惠內容 | 成功查詢並驗證剩餘次數 = 7 |
+| 優惠使用紀錄 | 成功查詢、越權（403）、不存在（404） |
+
+> 💡 注意 `場景大綱（Scenario Outline）+ 例子（Examples）` 表格：同一段情境用多組資料
+> 反覆執行，是 BDD 表達「相同行為、不同輸入」的標準做法。
+
+### 11.4 執行 BDD 測試
+
+```bash
+dotnet test tests/BankAccountQuery.BddTests
+# Reqnroll 會在建置時把 .feature 產生為可執行測試，13 個情境全數通過
+```
+
+---
+
+## 12. 設計決策（ADR 摘要）
 
 | ADR | 決策 | 一句話理由 |
 |-----|------|-----------|
@@ -459,7 +541,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-## 12. 尚未實作的部分
+## 13. 尚未實作的部分
 
 為了讓專案能在無外部相依的情況下直接執行與驗證，以下規劃中項目尚未落地，
 但架構已預留接縫：
@@ -467,10 +549,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - **真實資料庫 Adapter**：目前用 EF Core In-Memory；可替換為 PostgreSQL（Npgsql）。
 - **Redis 快取 Decorator**：`PrivilegeCacheAdapter` 包裝 `PrivilegeEfCoreAdapter`。
 - **Core Banking HTTP Adapter**：以 `HttpClient` 串接核心系統。
-- **BDD 測試（SpecFlow / Reqnroll）**：Gherkin 情境對應整合測試。
 - **可觀測性**：OpenTelemetry + Prometheus、Health Checks。
+- **BDD 活文件報告**：以 Reqnroll 產出 LivingDoc HTML 報告。
 
 ---
 
-> 🤖 本程式碼庫依教學文件實作並逐層驗證（48 個測試全數通過）。
-> 歡迎以此為起點，把第 12 節的延伸項目逐一補上。
+> 🤖 本程式碼庫依教學文件實作並逐層驗證（**61 個測試全數通過**：
+> Domain 28 / Application 9 / Infrastructure 11 / BDD 13）。
+> 歡迎以此為起點，把第 13 節的延伸項目逐一補上。

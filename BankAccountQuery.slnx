@@ -7,6 +7,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/BankAccountQuery.Application.Tests/BankAccountQuery.Application.Tests.csproj" />
+    <Project Path="tests/BankAccountQuery.BddTests/BankAccountQuery.BddTests.csproj" />
     <Project Path="tests/BankAccountQuery.Domain.Tests/BankAccountQuery.Domain.Tests.csproj" />
     <Project Path="tests/BankAccountQuery.Infrastructure.Tests/BankAccountQuery.Infrastructure.Tests.csproj" />
   </Folder>

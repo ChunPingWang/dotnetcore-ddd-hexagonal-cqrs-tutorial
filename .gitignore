@@ -30,6 +30,9 @@ project.fragment.lock.json
 coverage*.json
 coverage*.xml
 
+# Reqnroll / SpecFlow generated code-behind (regenerated on build)
+*.feature.cs
+
 # OS
 .DS_Store
 Thumbs.db
