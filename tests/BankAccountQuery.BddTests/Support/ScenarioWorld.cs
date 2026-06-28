@@ -37,6 +37,14 @@ public sealed class ScenarioWorld
         Body = await Response.Content.ReadAsStringAsync();
     }
 
+    public async Task PostJsonAsync(string url, object payload)
+    {
+        var json = JsonSerializer.Serialize(payload);
+        using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        Response = await _client.PostAsync(url, content);
+        Body = await Response.Content.ReadAsStringAsync();
+    }
+
     public T Deserialize<T>() =>
         JsonSerializer.Deserialize<T>(Body, JsonOptions)
         ?? throw new InvalidOperationException($"無法將回應反序列化為 {typeof(T).Name}：{Body}");

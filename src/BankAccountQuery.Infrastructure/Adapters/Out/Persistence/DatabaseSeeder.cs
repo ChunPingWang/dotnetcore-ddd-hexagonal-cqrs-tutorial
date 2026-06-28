@@ -89,6 +89,37 @@ public static class DatabaseSeeder
             ValidTo = new DateOnly(2025, 12, 31)
         });
 
+        // ── 寫入側（使用優惠）專用優惠，掛在客戶 C002 名下，
+        //    避免影響 C001 的讀取情境（有效期間刻意涵蓋未來以確保可用）──
+        db.Privileges.AddRange(
+            // 可正常使用：總 5 已用 0
+            new PrivilegeEntity
+            {
+                PrivilegeId = "P010", OwnerId = "C002",
+                Type = PrivilegeType.FeeWaiverInterBank,
+                TotalQuota = 5, UsedQuota = 0,
+                ValidFrom = new DateOnly(2025, 1, 1),
+                ValidTo = new DateOnly(2099, 12, 31)
+            },
+            // 已用盡：總 1 已用 1
+            new PrivilegeEntity
+            {
+                PrivilegeId = "P012", OwnerId = "C002",
+                Type = PrivilegeType.FeeWaiverInterBank,
+                TotalQuota = 1, UsedQuota = 1,
+                ValidFrom = new DateOnly(2025, 1, 1),
+                ValidTo = new DateOnly(2099, 12, 31)
+            },
+            // 已過期：有效期間在過去
+            new PrivilegeEntity
+            {
+                PrivilegeId = "P013", OwnerId = "C002",
+                Type = PrivilegeType.FeeWaiverInterBank,
+                TotalQuota = 5, UsedQuota = 0,
+                ValidFrom = new DateOnly(2020, 1, 1),
+                ValidTo = new DateOnly(2020, 12, 31)
+            });
+
         db.SaveChanges();
     }
 

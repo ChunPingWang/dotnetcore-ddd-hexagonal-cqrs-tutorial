@@ -30,21 +30,23 @@
 
 ## 1. 這個專案在做什麼
 
-它提供 4 個**唯讀查詢**功能給已登入的銀行客戶：
+它提供 4 個**唯讀查詢（Query）**與 1 個**寫入命令（Command）**功能給已登入的銀行客戶：
 
-| 功能 | 說明 |
-|------|------|
-| 台幣活存交易紀錄查詢 | 依日期區間查詢台幣帳戶進出 |
-| 外幣活存交易紀錄查詢 | 依幣別與日期區間查詢，顯示原幣與台幣等值 |
-| 轉帳優惠內容查詢 | 查詢可用優惠（剩餘免手續費次數、是否有效） |
-| 轉帳優惠使用紀錄查詢 | 查詢已使用的優惠歷史 |
+| 類型 | 功能 | 說明 |
+|------|------|------|
+| Query | 台幣活存交易紀錄查詢 | 依日期區間查詢台幣帳戶進出 |
+| Query | 外幣活存交易紀錄查詢 | 依幣別與日期區間查詢，顯示原幣與台幣等值 |
+| Query | 轉帳優惠內容查詢 | 查詢可用優惠（剩餘免手續費次數、是否有效） |
+| Query | 轉帳優惠使用紀錄查詢 | 查詢已使用的優惠歷史 |
+| **Command** | **使用一次轉帳優惠** | **扣減剩餘次數、留下使用紀錄、發布領域事件（寫入側 DDD 示範）** |
 
 幾條**業務規則**貫穿全程，而且它們被刻意放在「領域層」集中守護：
 
-- 客戶只能查自己名下的帳戶／優惠（**所有權驗證**）
+- 客戶只能查／使用自己名下的帳戶／優惠（**所有權驗證**）
 - 查詢區間不得超過 **13 個月**
 - 凍結帳戶不可查詢
-- 每次查詢都要留下**稽核日誌**
+- 使用優惠時**必須在有效期間內、且仍有剩餘次數**（寫入側不變量）
+- 每次查詢／命令都要留下**稽核日誌**
 
 ---
 
@@ -69,8 +71,9 @@
 > 可改看預先渲染的 PNG：[`docs/diagrams/`](./docs/diagrams/)
 > （[架構](./docs/diagrams/architecture.png)、
 > [類別圖](./docs/diagrams/class-diagram.png)、
-> [循序圖](./docs/diagrams/sequence-diagram.png)、
-> [ER 圖](./docs/diagrams/er-diagram.png)）。
+> [查詢循序圖](./docs/diagrams/sequence-diagram.png)、
+> [ER 圖](./docs/diagrams/er-diagram.png)、
+> [使用優惠循序圖](./docs/diagrams/use-privilege-sequence.png)）。
 
 六角形架構把系統畫成一個「六角形」：中間是純粹的業務核心，外面用 Port／Adapter
 跟真實世界（HTTP、資料庫、快取）溝通。左邊是「主動呼叫我們」的（Driving），
@@ -114,29 +117,32 @@ Infrastructure  →  Application  →  Domain
 BankAccountQuery/
 ├── src/
 │   ├── BankAccountQuery.Domain/          ← 領域層：業務規則，零 NuGet 依賴
+│   │   ├── Common/                       #   AggregateRoot 基底、IDomainEvent（領域事件）
 │   │   ├── Model/Shared/                 #   Money, DateRange, CustomerId, Currency
 │   │   ├── Model/Account/                #   Account 聚合 + Transaction + …
-│   │   ├── Model/Privilege/              #   TransferPrivilege 聚合 + …
+│   │   ├── Model/Privilege/              #   TransferPrivilege 聚合 + TransferPrivilegeUsedEvent
 │   │   └── Exceptions/                   #   業務語意例外（DomainException）
 │   │
 │   ├── BankAccountQuery.Application/      ← 應用層：用例 + Port 定義 + MediatR
-│   │   ├── Ports/Out/                    #   Output Port 介面（Repository 在這裡！）
-│   │   ├── Queries/                      #   Query Record + Handler + Result DTO + Validator
+│   │   ├── Ports/Out/                    #   Output Port（含 ISavePrivilegePort、IDomainEventDispatcher）
+│   │   ├── Queries/                      #   讀取側：Query + Handler + Result DTO + Validator
+│   │   ├── Commands/                     #   寫入側：Command + Handler + 領域事件處理者
 │   │   ├── Behaviors/                    #   Pipeline：Logging / Validation / AuditLog
-│   │   └── Common/                       #   ICustomerQuery, 分頁, 驗證例外
+│   │   └── Common/                       #   ICustomerQuery, IDomainEventHandler, 分頁, 驗證例外
 │   │
 │   ├── BankAccountQuery.Infrastructure/   ← 基礎設施層：Adapter（實作 Port）
 │   │   ├── Adapters/In/Web/              #   Controller, GlobalExceptionHandler, JWT
-│   │   ├── Adapters/Out/Persistence/     #   EF Core DbContext + Adapter + 種子資料
-│   │   └── Configuration/                #   DI 註冊（MediatR, Validators, Adapters）
+│   │   ├── Adapters/Out/Persistence/     #   EF Core DbContext + Adapter（讀+寫）+ 種子資料
+│   │   ├── Adapters/Out/Events/          #   DomainEventDispatcher（從 DI 解析 handler）
+│   │   └── Configuration/                #   DI 註冊（MediatR, Validators, Adapters, 領域事件）
 │   │
 │   └── BankAccountQuery.Api/              ← 組合根：Program.cs + appsettings.json
 │
 └── tests/
-    ├── BankAccountQuery.Domain.Tests/         # 純 C# 單元測試（28）
-    ├── BankAccountQuery.Application.Tests/     # NSubstitute Mock Port（9）
-    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（11）
-    └── BankAccountQuery.BddTests/              # Reqnroll + Gherkin 情境測試（13）
+    ├── BankAccountQuery.Domain.Tests/         # 純 C# 單元測試（33）
+    ├── BankAccountQuery.Application.Tests/     # NSubstitute Mock Port（13）
+    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（15）
+    └── BankAccountQuery.BddTests/              # Reqnroll + Gherkin 情境測試（17）
 ```
 
 > **為什麼 Repository 介面放在「應用層」而不是「領域層」？**
@@ -182,6 +188,12 @@ classDiagram
         +DateRange QueriedRange
         +int Count
     }
+    class AggregateRoot {
+        <<abstract>>
+        +IReadOnlyList~IDomainEvent~ DomainEvents
+        +ClearDomainEvents() void
+        #RaiseDomainEvent(IDomainEvent) void
+    }
     class TransferPrivilege {
         <<AggregateRoot>>
         +PrivilegeId PrivilegeId
@@ -193,6 +205,14 @@ classDiagram
         +GetRemainingQuota() int
         +VerifyOwnership(CustomerId) void
         +FilterUsageHistory(DateRange) PrivilegeUsageHistory
+        +Use(usageId, Money, desc, DateOnly) PrivilegeUsageRecord
+    }
+    class TransferPrivilegeUsedEvent {
+        <<DomainEvent>>
+        +PrivilegeId PrivilegeId
+        +CustomerId OwnerId
+        +int RemainingQuota
+        +DateTime OccurredOn
     }
     class PrivilegeUsageRecord {
         <<Entity>>
@@ -228,9 +248,11 @@ classDiagram
     Account *-- CustomerId
     Transaction *-- Money
     TransactionHistory o-- "*" Transaction
+    AggregateRoot <|-- TransferPrivilege
     TransferPrivilege "1" *-- "*" PrivilegeUsageRecord
     TransferPrivilege *-- CustomerId
     TransferPrivilege *-- DateRange
+    TransferPrivilege ..> TransferPrivilegeUsedEvent : Use() 時發布
     PrivilegeUsageRecord *-- Money
 ```
 
@@ -390,6 +412,58 @@ Logging → Validation → AuditLog → Handler.Handle()
 | `AccountNotActiveException` / `QueryRangeExceededException` | 422 |
 | `QueryValidationException` | 400 |
 
+### 8.7 寫入側（Command）＝聚合真正「工作」的地方
+
+讀取側的聚合主要在做授權與過濾；**寫入側才是 DDD 聚合的主場**：它在「改變狀態」時
+強制守護**不變量（Invariant）**。本專案以 `UseTransferPrivilegeCommand`（使用一次優惠）示範。
+
+核心方法 `TransferPrivilege.Use(...)` 把規則寫死在聚合裡——任一不變量違反，**狀態完全不變**：
+
+```csharp
+public PrivilegeUsageRecord Use(string usageId, Money savedAmount, string description, DateOnly usedDate)
+{
+    if (!ValidPeriod.Contains(usedDate))      throw new PrivilegeExpiredException(PrivilegeId);      // 不變量 1：須在有效期
+    if (GetRemainingQuota() <= 0)             throw new PrivilegeQuotaExhaustedException(PrivilegeId); // 不變量 2：須有剩餘次數
+
+    var record = new PrivilegeUsageRecord(usageId, usedDate, savedAmount, description);
+    _usageRecords.Add(record);
+    UsedQuota += 1;
+    RaiseDomainEvent(new TransferPrivilegeUsedEvent(...));  // 發布領域事件
+    return record;
+}
+```
+
+**領域事件（Domain Event）** 由聚合的 `AggregateRoot` 基底收集；Handler 在**持久化成功後**
+才取出快照、清空、交給 `IDomainEventDispatcher` 派發給各 `IDomainEventHandler`。
+依本專案原則，領域事件**不直接用 MediatR 的 `INotification`**，而是走自訂的 Dispatcher Port，
+讓領域層維持零框架依賴。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as 客戶
+    participant Ctrl as PrivilegeController
+    participant H as UseTransferPrivilegeHandler
+    participant LP as ILoadPrivilegePort
+    participant Agg as TransferPrivilege (聚合)
+    participant SP as ISavePrivilegePort
+    participant D as IDomainEventDispatcher
+
+    C->>Ctrl: POST /privileges/transfer/{id}/use
+    Ctrl->>H: Send(UseTransferPrivilegeCommand)
+    H->>LP: FindByPrivilegeIdAsync(id)
+    LP-->>H: TransferPrivilege (找不到→404)
+    H->>Agg: VerifyOwnership(customerId)
+    Note over Agg: 非持有人→403
+    H->>Agg: Use(usageId, money, desc, today)
+    Note over Agg: 過期→422 / 次數用盡→422<br/>否則：加計次數 + 產生 UsedEvent
+    H->>SP: SaveAsync(privilege)
+    H->>D: DispatchAsync(domainEvents)
+    D-->>H: 事件處理完成（記錄日誌…）
+    H-->>Ctrl: UseTransferPrivilegeResult(剩餘次數)
+    Ctrl-->>C: 200 OK
+```
+
 ---
 
 ## 9. API 端點
@@ -400,9 +474,11 @@ Logging → Validation → AuditLog → Handler.Handle()
 | `GET` | `/api/v1/accounts/{accountId}/transactions/fx?currency=USD` | 外幣交易紀錄 | JWT |
 | `GET` | `/api/v1/customers/me/privileges/transfer` | 轉帳優惠內容 | JWT |
 | `GET` | `/api/v1/customers/me/privileges/transfer/{privilegeId}/usage` | 優惠使用紀錄 | JWT |
+| `POST` | `/api/v1/customers/me/privileges/transfer/{privilegeId}/use` | **使用一次優惠（寫入命令）** | JWT |
 | `GET` | `/health` | 健康檢查 | 無 |
 
 共同查詢參數：`startDate`、`endDate`（`yyyy-MM-dd`）、`page`（預設 0）、`size`（預設 20，1–100）。
+`POST .../use` 的請求本文：`{ "savedAmount": 15, "description": "跨行轉帳免手續費" }`。
 
 ---
 
@@ -416,7 +492,7 @@ Logging → Validation → AuditLog → Handler.Handle()
 # 還原 + 建置整個方案
 dotnet build BankAccountQuery.slnx
 
-# 執行全部 61 個測試（Domain 28 / Application 9 / Infrastructure 11 / BDD 13）
+# 執行全部 78 個測試（Domain 33 / Application 13 / Infrastructure 15 / BDD 17）
 dotnet test BankAccountQuery.slnx
 ```
 
@@ -516,6 +592,7 @@ BddTests/
 | 外幣交易紀錄 | 成功查詢並顯示台幣等值與匯率、錯誤情境 `場景大綱`（403／422 兩列資料） |
 | 轉帳優惠內容 | 成功查詢並驗證剩餘次數 = 7 |
 | 優惠使用紀錄 | 成功查詢、越權（403）、不存在（404） |
+| **使用優惠（寫入）** | **成功扣減剩餘次數、次數用盡（422）、已過期（422）、越權（403）** |
 
 > 💡 注意 `場景大綱（Scenario Outline）+ 例子（Examples）` 表格：同一段情境用多組資料
 > 反覆執行，是 BDD 表達「相同行為、不同輸入」的標準做法。
@@ -543,17 +620,18 @@ dotnet test tests/BankAccountQuery.BddTests
 
 ## 13. 尚未實作的部分
 
-為了讓專案能在無外部相依的情況下直接執行與驗證，以下規劃中項目尚未落地，
-但架構已預留接縫：
+本專案同時涵蓋**讀取側（Query）與寫入側（Command）**，後者示範了聚合不變量守護
+與領域事件。以下規劃中項目尚未落地，但架構已預留接縫：
 
 - **真實資料庫 Adapter**：目前用 EF Core In-Memory；可替換為 PostgreSQL（Npgsql）。
 - **Redis 快取 Decorator**：`PrivilegeCacheAdapter` 包裝 `PrivilegeEfCoreAdapter`。
 - **Core Banking HTTP Adapter**：以 `HttpClient` 串接核心系統。
+- **整合事件 / Outbox**：將領域事件可靠地發布到訊息佇列（目前僅行程內派發）。
 - **可觀測性**：OpenTelemetry + Prometheus、Health Checks。
 - **BDD 活文件報告**：以 Reqnroll 產出 LivingDoc HTML 報告。
 
 ---
 
-> 🤖 本程式碼庫依教學文件實作並逐層驗證（**61 個測試全數通過**：
-> Domain 28 / Application 9 / Infrastructure 11 / BDD 13）。
+> 🤖 本程式碼庫依教學文件實作並逐層驗證（**78 個測試全數通過**：
+> Domain 33 / Application 13 / Infrastructure 15 / BDD 17）。
 > 歡迎以此為起點，把第 13 節的延伸項目逐一補上。

@@ -1,3 +1,4 @@
+using BankAccountQuery.Application.Commands.Privilege.Results;
 using BankAccountQuery.Application.Queries.Privilege.Results;
 using BankAccountQuery.BddTests.Support;
 using BankAccountQuery.Infrastructure.Adapters.In.Web;
@@ -44,5 +45,19 @@ public sealed class PrivilegeSteps
     {
         var body = _world.Deserialize<ApiResponse<PrivilegeUsageHistoryResult>>();
         body.Data.Records.Count.Should().BeGreaterThanOrEqualTo(min);
+    }
+
+    // ── 寫入側：使用優惠 ─────────────────────────────────────────────
+    [When(@"客戶使用優惠 ""(.*)"" 並節省 ""(.*)"" 元，說明 ""(.*)""")]
+    public Task WhenUsePrivilege(string privilegeId, decimal saved, string description)
+        => _world.PostJsonAsync(
+            $"/api/v1/customers/me/privileges/transfer/{privilegeId}/use",
+            new { savedAmount = saved, description });
+
+    [Then(@"優惠使用後剩餘次數為 (\d+)")]
+    public void ThenRemainingAfterUse(int remaining)
+    {
+        var body = _world.Deserialize<ApiResponse<UseTransferPrivilegeResult>>();
+        body.Data.RemainingQuota.Should().Be(remaining);
     }
 }

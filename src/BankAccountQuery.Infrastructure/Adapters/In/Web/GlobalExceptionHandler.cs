@@ -32,6 +32,8 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             QueryValidationException                 => (400, "VALIDATION_FAILED"),
             PrivilegeNotFoundException               => (404, "PRIVILEGE_NOT_FOUND"),
             PrivilegeNotOwnedByCustomerException     => (403, "PRIVILEGE_NOT_OWNED_BY_CUSTOMER"),
+            PrivilegeExpiredException                => (422, "PRIVILEGE_EXPIRED"),
+            PrivilegeQuotaExhaustedException         => (422, "PRIVILEGE_QUOTA_EXHAUSTED"),
             ArgumentException                        => (400, "INVALID_ARGUMENT"),
             _                                        => (500, "INTERNAL_SERVER_ERROR")
         };

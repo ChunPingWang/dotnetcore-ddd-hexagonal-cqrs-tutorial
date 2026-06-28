@@ -1,3 +1,5 @@
+using BankAccountQuery.Application.Commands.Privilege;
+using BankAccountQuery.Application.Commands.Privilege.Results;
 using BankAccountQuery.Application.Queries.Privilege;
 using BankAccountQuery.Application.Queries.Privilege.Results;
 using BankAccountQuery.Domain.Model.Privilege;
@@ -54,4 +56,29 @@ public sealed class PrivilegeController : ControllerBase
         var result = await _sender.Send(query, cancellationToken);
         return Ok(ApiResponse<PrivilegeUsageHistoryResult>.Success(result));
     }
+
+    // ── 寫入側：使用一次轉帳優惠 ────────────────────────────────────────
+    [HttpPost("transfer/{privilegeId}/use")]
+    [ProducesResponseType(typeof(ApiResponse<UseTransferPrivilegeResult>), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(422)]
+    public async Task<IActionResult> UseTransferPrivilege(
+        [FromRoute] string privilegeId,
+        [FromBody] UsePrivilegeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var command = new UseTransferPrivilegeCommand(
+            CustomerId.Of(User.GetCustomerId()),
+            PrivilegeId.Of(privilegeId),
+            request.SavedAmount,
+            request.Description);
+
+        var result = await _sender.Send(command, cancellationToken);
+        return Ok(ApiResponse<UseTransferPrivilegeResult>.Success(result));
+    }
 }
+
+/// <summary>使用優惠的請求內容。</summary>
+public sealed record UsePrivilegeRequest(decimal SavedAmount, string Description);

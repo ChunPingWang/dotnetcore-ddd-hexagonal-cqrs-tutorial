@@ -1,9 +1,13 @@
 using System.Text;
 using BankAccountQuery.Application.Behaviors;
+using BankAccountQuery.Application.Commands.Privilege;
+using BankAccountQuery.Application.Common;
 using BankAccountQuery.Application.Ports.Out;
 using BankAccountQuery.Application.Queries.Account;
+using BankAccountQuery.Domain.Model.Privilege;
 using BankAccountQuery.Infrastructure.Adapters.In.Web;
 using BankAccountQuery.Infrastructure.Adapters.Out.AuditLog;
+using BankAccountQuery.Infrastructure.Adapters.Out.Events;
 using BankAccountQuery.Infrastructure.Adapters.Out.Persistence;
 using BankAccountQuery.Infrastructure.Adapters.Out.RequestContext;
 using FluentValidation;
@@ -25,6 +29,7 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         services.AddPersistence(configuration);
+        services.AddDomainEvents();
         services.AddApplicationCore();
         services.AddWebAdapters();
         services.AddJwtAuthentication(configuration);
@@ -42,7 +47,18 @@ public static class DependencyInjection
         services.AddScoped<ILoadAccountPort, AccountEfCoreAdapter>();
         services.AddScoped<ILoadTransactionPort, TransactionEfCoreAdapter>();
         services.AddScoped<ILoadPrivilegePort, PrivilegeEfCoreAdapter>();
+        services.AddScoped<ISavePrivilegePort, PrivilegeEfCoreAdapter>();
         services.AddSingleton<IAuditLogPort, InMemoryAuditLogAdapter>();
+        return services;
+    }
+
+    // ── 領域事件派發 + 處理者 ────────────────────────────────────────────
+    private static IServiceCollection AddDomainEvents(this IServiceCollection services)
+    {
+        services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>();
+        services.AddScoped<
+            IDomainEventHandler<TransferPrivilegeUsedEvent>,
+            TransferPrivilegeUsedLoggingHandler>();
         return services;
     }
 
