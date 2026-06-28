@@ -73,7 +73,8 @@
 > [類別圖](./docs/diagrams/class-diagram.png)、
 > [查詢循序圖](./docs/diagrams/sequence-diagram.png)、
 > [ER 圖](./docs/diagrams/er-diagram.png)、
-> [使用優惠循序圖](./docs/diagrams/use-privilege-sequence.png)）。
+> [使用優惠循序圖](./docs/diagrams/use-privilege-sequence.png)、
+> [Outbox 流程圖](./docs/diagrams/outbox.png)）。
 
 六角形架構把系統畫成一個「六角形」：中間是純粹的業務核心，外面用 Port／Adapter
 跟真實世界（HTTP、資料庫、快取）溝通。左邊是「主動呼叫我們」的（Driving），
@@ -141,7 +142,7 @@ BankAccountQuery/
 └── tests/
     ├── BankAccountQuery.Domain.Tests/         # 純 C# 單元測試（33）
     ├── BankAccountQuery.Application.Tests/     # NSubstitute Mock Port（13）
-    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（15）
+    ├── BankAccountQuery.Infrastructure.Tests/  # WebApplicationFactory 整合測試（18，含 Outbox）
     └── BankAccountQuery.BddTests/              # Reqnroll + Gherkin 情境測試（17）
 ```
 
@@ -433,8 +434,9 @@ public PrivilegeUsageRecord Use(string usageId, Money savedAmount, string descri
 }
 ```
 
-**領域事件（Domain Event）** 由聚合的 `AggregateRoot` 基底收集；Handler 在**持久化成功後**
-才取出快照、清空、交給 `IDomainEventDispatcher` 派發給各 `IDomainEventHandler`。
+**領域事件（Domain Event）** 由聚合的 `AggregateRoot` 基底收集。`SaveAsync` 會把這些事件
+**與狀態變更寫在同一次 `SaveChanges`（同一交易）**到 **Outbox** 表（見 §8.8），
+之後由背景處理器可靠地派發給各 `IDomainEventHandler`。
 依本專案原則，領域事件**不直接用 MediatR 的 `INotification`**，而是走自訂的 Dispatcher Port，
 讓領域層維持零框架依賴。
 
@@ -446,8 +448,7 @@ sequenceDiagram
     participant H as UseTransferPrivilegeHandler
     participant LP as ILoadPrivilegePort
     participant Agg as TransferPrivilege (聚合)
-    participant SP as ISavePrivilegePort
-    participant D as IDomainEventDispatcher
+    participant SP as ISavePrivilegePort（含 Outbox 寫入）
 
     C->>Ctrl: POST /privileges/transfer/{id}/use
     Ctrl->>H: Send(UseTransferPrivilegeCommand)
@@ -458,11 +459,35 @@ sequenceDiagram
     H->>Agg: Use(usageId, money, desc, today)
     Note over Agg: 過期→422 / 次數用盡→422<br/>否則：加計次數 + 產生 UsedEvent
     H->>SP: SaveAsync(privilege)
-    H->>D: DispatchAsync(domainEvents)
-    D-->>H: 事件處理完成（記錄日誌…）
+    Note over SP: 同一交易：寫入狀態 + Outbox 訊息
     H-->>Ctrl: UseTransferPrivilegeResult(剩餘次數)
     Ctrl-->>C: 200 OK
 ```
+
+### 8.8 Transactional Outbox＝領域事件的可靠交付
+
+若在「資料庫已提交」但「事件還沒派發」之間程序崩潰，事件就永久遺失了。
+**Transactional Outbox** 解決這個問題：把事件當成一筆資料，**和聚合狀態寫在同一個交易**裡；
+再由獨立的背景處理器讀取未處理的事件、派發、標記完成（**至少一次**交付）。
+
+```mermaid
+flowchart LR
+    H["UseTransferPrivilegeHandler"] -->|"SaveAsync()"| TX
+    subgraph TX["單一資料庫交易"]
+        S["Privileges / PrivilegeUsages<br/>(狀態變更)"]
+        O["OutboxMessages<br/>(序列化的領域事件)"]
+    end
+    BG["OutboxBackgroundService<br/>每 2 秒輪詢"] -->|"讀未處理"| O
+    BG -->|"DispatchAsync"| HD["IDomainEventHandler<br/>(記錄日誌 / 通知 / 整合事件…)"]
+    BG -->|"標記 ProcessedOnUtc"| O
+```
+
+- 寫入：`PrivilegeEfCoreAdapter.SaveAsync` 序列化 `privilege.DomainEvents` 寫入 `OutboxMessages`。
+- 派發：`OutboxProcessor.ProcessPendingAsync` 讀未處理 → 反序列化 → `IDomainEventDispatcher` →
+  標記 `ProcessedOnUtc`；單筆失敗只記 `Error` 不影響其他訊息。
+- 觸發：`OutboxBackgroundService`（`BackgroundService`）每 2 秒以新的 DI Scope 執行一次。
+
+> ⚠️ 目前為單體內的 Outbox（同一資料庫）；尚未把事件再轉發到外部訊息佇列（整合事件）。
 
 ---
 
@@ -492,7 +517,7 @@ sequenceDiagram
 # 還原 + 建置整個方案
 dotnet build BankAccountQuery.slnx
 
-# 執行全部 78 個測試（Domain 33 / Application 13 / Infrastructure 15 / BDD 17）
+# 執行全部 81 個測試（Domain 33 / Application 13 / Infrastructure 18 / BDD 17）
 dotnet test BankAccountQuery.slnx
 ```
 
@@ -650,17 +675,17 @@ dotnet test tests/BankAccountQuery.BddTests
 - ✅ **Swagger / OpenAPI**：`/swagger`（含 JWT 設定）。
 - ✅ **Health Checks**：`/health` 含資料庫探針。
 - ✅ **OpenTelemetry + Prometheus**：`/metrics`。
+- ✅ **Transactional Outbox**：領域事件與狀態同一交易寫入，背景處理器可靠派發（§8.8）。
 
 **仍未落地**（架構已預留接縫）：
 - **Redis 快取 Decorator**：`PrivilegeCacheAdapter` 包裝 `PrivilegeEfCoreAdapter`。
 - **Core Banking HTTP Adapter**：以 `HttpClient` 串接核心系統。
-- **整合事件 / Outbox**：將領域事件可靠地發布到訊息佇列（目前僅行程內派發、
-  且與資料庫寫入非單一交易）。
+- **整合事件（Integration Events）**：把 Outbox 事件再轉發到外部訊息佇列。
 - **Testcontainers / WireMock 整合測試**、**CI Pipeline（GitHub Actions）**。
 - **BDD 活文件報告**：以 Reqnroll 產出 LivingDoc HTML 報告。
 
 ---
 
-> 🤖 本程式碼庫依教學文件實作並逐層驗證（**78 個測試全數通過**：
-> Domain 33 / Application 13 / Infrastructure 15 / BDD 17）。
+> 🤖 本程式碼庫依教學文件實作並逐層驗證（**81 個測試全數通過**：
+> Domain 33 / Application 13 / Infrastructure 18 / BDD 17）。
 > 歡迎以此為起點，把第 13 節的延伸項目逐一補上。

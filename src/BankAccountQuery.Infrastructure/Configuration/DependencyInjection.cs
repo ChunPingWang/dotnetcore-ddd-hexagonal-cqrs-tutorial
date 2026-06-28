@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
@@ -73,13 +74,17 @@ public static class DependencyInjection
         return services;
     }
 
-    // ── 領域事件派發 + 處理者 ────────────────────────────────────────────
+    // ── 領域事件派發 + 處理者 + Outbox ───────────────────────────────────
     private static IServiceCollection AddDomainEvents(this IServiceCollection services)
     {
         services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>();
         services.AddScoped<
             IDomainEventHandler<TransferPrivilegeUsedEvent>,
             TransferPrivilegeUsedLoggingHandler>();
+
+        // Outbox：可靠地將已持久化的領域事件派發出去
+        services.AddScoped<OutboxProcessor>();
+        services.AddHostedService<OutboxBackgroundService>();
         return services;
     }
 

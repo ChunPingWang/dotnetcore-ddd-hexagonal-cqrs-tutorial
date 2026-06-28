@@ -14,11 +14,10 @@ public sealed class UseTransferPrivilegeHandlerTests
 {
     private readonly ILoadPrivilegePort _load = Substitute.For<ILoadPrivilegePort>();
     private readonly ISavePrivilegePort _save = Substitute.For<ISavePrivilegePort>();
-    private readonly IDomainEventDispatcher _dispatcher = Substitute.For<IDomainEventDispatcher>();
     private readonly UseTransferPrivilegeHandler _handler;
 
     public UseTransferPrivilegeHandlerTests()
-        => _handler = new UseTransferPrivilegeHandler(_load, _save, _dispatcher);
+        => _handler = new UseTransferPrivilegeHandler(_load, _save);
 
     private static readonly DateOnly Today = DateOnly.FromDateTime(DateTime.UtcNow);
 
@@ -36,13 +35,19 @@ public sealed class UseTransferPrivilegeHandlerTests
         _load.FindByPrivilegeIdAsync(Arg.Any<PrivilegeId>(), Arg.Any<CancellationToken>())
             .Returns(Privilege(total: 5, used: 0));
 
+        // 在 SaveAsync 被呼叫的當下擷取領域事件數（Handler 之後才 ClearDomainEvents）
+        var eventsAtSave = -1;
+        _save.SaveAsync(Arg.Any<TransferPrivilege>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => eventsAtSave = ((TransferPrivilege)ci[0]).DomainEvents.Count);
+
         var result = await _handler.Handle(Command(), CancellationToken.None);
 
         result.RemainingQuota.Should().Be(4);
         result.UsageId.Should().NotBeNullOrWhiteSpace();
         await _save.Received(1).SaveAsync(Arg.Any<TransferPrivilege>(), Arg.Any<CancellationToken>());
-        await _dispatcher.Received(1).DispatchAsync(
-            Arg.Is<IReadOnlyList<IDomainEvent>>(e => e.Count == 1), Arg.Any<CancellationToken>());
+        // 領域事件在持久化當下存在（由 SaveAsync 一併寫入 Outbox）
+        eventsAtSave.Should().Be(1);
     }
 
     [Fact(DisplayName = "優惠不存在應拋出 PrivilegeNotFoundException 且不持久化")]
@@ -67,8 +72,6 @@ public sealed class UseTransferPrivilegeHandlerTests
 
         await act.Should().ThrowAsync<PrivilegeNotOwnedByCustomerException>();
         await _save.DidNotReceive().SaveAsync(Arg.Any<TransferPrivilege>(), Arg.Any<CancellationToken>());
-        await _dispatcher.DidNotReceive().DispatchAsync(
-            Arg.Any<IReadOnlyList<IDomainEvent>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact(DisplayName = "次數用盡時應拋出例外且不持久化")]

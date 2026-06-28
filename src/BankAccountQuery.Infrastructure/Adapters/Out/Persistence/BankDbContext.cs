@@ -11,6 +11,7 @@ public sealed class BankDbContext : DbContext
     public DbSet<TransactionEntity> Transactions => Set<TransactionEntity>();
     public DbSet<PrivilegeEntity> Privileges => Set<PrivilegeEntity>();
     public DbSet<PrivilegeUsageEntity> PrivilegeUsages => Set<PrivilegeUsageEntity>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -43,6 +44,15 @@ public sealed class BankDbContext : DbContext
         {
             e.HasKey(x => x.UsageId);
             e.Property(x => x.SavedAmount).HasPrecision(18, 2);
+        });
+
+        modelBuilder.Entity<OutboxMessage>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.ProcessedOnUtc);   // 加速「尚未處理」查詢
+            // OccurredOnUtc / ProcessedOnUtc 皆為 UTC，對應 timestamptz（接受 Kind=Utc）
+            e.Property(x => x.OccurredOnUtc).HasColumnType("timestamp with time zone");
+            e.Property(x => x.ProcessedOnUtc).HasColumnType("timestamp with time zone");
         });
     }
 }

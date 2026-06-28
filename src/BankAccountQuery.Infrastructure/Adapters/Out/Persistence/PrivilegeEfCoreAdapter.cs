@@ -2,6 +2,7 @@ using BankAccountQuery.Application.Ports.Out;
 using BankAccountQuery.Domain.Exceptions;
 using BankAccountQuery.Domain.Model.Privilege;
 using BankAccountQuery.Domain.Model.Shared;
+using BankAccountQuery.Infrastructure.Adapters.Out.Events;
 using BankAccountQuery.Infrastructure.Adapters.Out.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -64,6 +65,21 @@ public sealed class PrivilegeEfCoreAdapter : ILoadPrivilegePort, ISavePrivilegeP
                 SavedAmount = record.SavedAmount.Amount,
                 Currency = record.SavedAmount.Currency,
                 Description = record.Description
+            });
+        }
+
+        // 領域事件寫入 Outbox —— 與上面的狀態變更在「同一個 SaveChanges（交易）」內，
+        // 確保事件不會因為程序在持久化後、派發前崩潰而遺失。
+        foreach (var domainEvent in privilege.DomainEvents)
+        {
+            var (type, content) = DomainEventSerialization.Serialize(domainEvent);
+            _dbContext.OutboxMessages.Add(new OutboxMessage
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Type = type,
+                Content = content,
+                OccurredOnUtc = domainEvent.OccurredOn,
+                ProcessedOnUtc = null
             });
         }
 

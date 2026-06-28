@@ -8,24 +8,22 @@ namespace BankAccountQuery.Application.Commands.Privilege;
 
 /// <summary>
 /// 寫入側 Handler：只做協調，所有不變量由聚合 <c>TransferPrivilege.Use()</c> 守護。
-/// 流程：載入聚合 → 驗證所有權 → 委派 Use（變更狀態 + 產生事件）
-///       → 持久化 → 派發領域事件。
+/// 流程：載入聚合 → 驗證所有權 → 委派 Use（變更狀態 + 產生事件）→ 持久化。
+/// 領域事件由 SaveAsync 一併寫入 Outbox（同一交易），再由背景處理器可靠派發，
+/// 因此 Handler 本身不直接派發事件。
 /// </summary>
 public sealed class UseTransferPrivilegeHandler
     : IRequestHandler<UseTransferPrivilegeCommand, UseTransferPrivilegeResult>
 {
     private readonly ILoadPrivilegePort _loadPrivilegePort;
     private readonly ISavePrivilegePort _savePrivilegePort;
-    private readonly IDomainEventDispatcher _domainEventDispatcher;
 
     public UseTransferPrivilegeHandler(
         ILoadPrivilegePort loadPrivilegePort,
-        ISavePrivilegePort savePrivilegePort,
-        IDomainEventDispatcher domainEventDispatcher)
+        ISavePrivilegePort savePrivilegePort)
     {
         _loadPrivilegePort = loadPrivilegePort;
         _savePrivilegePort = savePrivilegePort;
-        _domainEventDispatcher = domainEventDispatcher;
     }
 
     public async Task<UseTransferPrivilegeResult> Handle(
@@ -45,13 +43,9 @@ public sealed class UseTransferPrivilegeHandler
         var record = privilege.Use(
             usageId, Money.Twd(command.SavedAmount), command.Description, usedDate);
 
-        // 持久化（以聚合根為單位）
+        // 持久化（以聚合根為單位）；領域事件會在此一併寫入 Outbox（同一交易）
         await _savePrivilegePort.SaveAsync(privilege, cancellationToken);
-
-        // 取出事件快照後清空，再派發（避免將聚合的即時集合外洩給消費者）
-        var domainEvents = privilege.DomainEvents.ToList();
         privilege.ClearDomainEvents();
-        await _domainEventDispatcher.DispatchAsync(domainEvents, cancellationToken);
 
         return new UseTransferPrivilegeResult(
             privilege.PrivilegeId.Value,
