@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    name: Build & Test (.NET 10)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore BankAccountQuery.slnx
+
+      - name: Build
+        run: dotnet build BankAccountQuery.slnx --no-restore --configuration Release
+
+      - name: Test
+        # 預設使用 EF Core InMemory，測試不需外部資料庫（PostgreSQL/Redis）
+        run: dotnet test BankAccountQuery.slnx --no-build --configuration Release --verbosity normal

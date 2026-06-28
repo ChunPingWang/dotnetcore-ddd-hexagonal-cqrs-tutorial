@@ -1,5 +1,7 @@
 # 銀行帳戶查詢 API — DDD · Hexagonal · CQRS 教學專案
 
+[![CI](https://github.com/ChunPingWang/dotnetcore-ddd-hexagonal-cqrs-tutorial/actions/workflows/ci.yml/badge.svg)](https://github.com/ChunPingWang/dotnetcore-ddd-hexagonal-cqrs-tutorial/actions/workflows/ci.yml)
+
 > 以 **.NET 10 + MediatR** 實作的銀行帳戶查詢服務，示範如何把
 > **領域驅動設計（DDD）**、**六角形架構（Hexagonal Architecture）**、
 > **命令查詢職責分離（CQRS）** 與 **SOLID** 原則組合在一起。
@@ -676,12 +678,13 @@ dotnet test tests/BankAccountQuery.BddTests
 - ✅ **Health Checks**：`/health` 含資料庫探針。
 - ✅ **OpenTelemetry + Prometheus**：`/metrics`。
 - ✅ **Transactional Outbox**：領域事件與狀態同一交易寫入，背景處理器可靠派發（§8.8）。
+- ✅ **CI Pipeline（GitHub Actions）**：每次 push／PR 自動 restore／build／test（81 個測試）。
 
 **仍未落地**（架構已預留接縫）：
 - **Redis 快取 Decorator**：`PrivilegeCacheAdapter` 包裝 `PrivilegeEfCoreAdapter`。
 - **Core Banking HTTP Adapter**：以 `HttpClient` 串接核心系統。
 - **整合事件（Integration Events）**：把 Outbox 事件再轉發到外部訊息佇列。
-- **Testcontainers / WireMock 整合測試**、**CI Pipeline（GitHub Actions）**。
+- **Testcontainers / WireMock 整合測試**。
 - **BDD 活文件報告**：以 Reqnroll 產出 LivingDoc HTML 報告。
 
 ---
