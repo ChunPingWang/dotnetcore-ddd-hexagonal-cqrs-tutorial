@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BankAccountQuery.Api/BankAccountQuery.Api.csproj" />
+    <Project Path="src/BankAccountQuery.Application/BankAccountQuery.Application.csproj" />
+    <Project Path="src/BankAccountQuery.Domain/BankAccountQuery.Domain.csproj" />
+    <Project Path="src/BankAccountQuery.Infrastructure/BankAccountQuery.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BankAccountQuery.Application.Tests/BankAccountQuery.Application.Tests.csproj" />
+    <Project Path="tests/BankAccountQuery.Domain.Tests/BankAccountQuery.Domain.Tests.csproj" />
+    <Project Path="tests/BankAccountQuery.Infrastructure.Tests/BankAccountQuery.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>

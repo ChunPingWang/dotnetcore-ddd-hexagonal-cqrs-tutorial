@@ -1,0 +1,46 @@
+using BankAccountQuery.Infrastructure.Adapters.Out.Persistence.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace BankAccountQuery.Infrastructure.Adapters.Out.Persistence;
+
+public sealed class BankDbContext : DbContext
+{
+    public BankDbContext(DbContextOptions<BankDbContext> options) : base(options) { }
+
+    public DbSet<AccountEntity> Accounts => Set<AccountEntity>();
+    public DbSet<TransactionEntity> Transactions => Set<TransactionEntity>();
+    public DbSet<PrivilegeEntity> Privileges => Set<PrivilegeEntity>();
+    public DbSet<PrivilegeUsageEntity> PrivilegeUsages => Set<PrivilegeUsageEntity>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AccountEntity>(e =>
+        {
+            e.HasKey(x => x.AccountId);
+            e.Property(x => x.OwnerId).IsRequired();
+        });
+
+        modelBuilder.Entity<TransactionEntity>(e =>
+        {
+            e.HasKey(x => x.TransactionId);
+            e.HasIndex(x => x.AccountId);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.TwdEquivalent).HasPrecision(18, 2);
+        });
+
+        modelBuilder.Entity<PrivilegeEntity>(e =>
+        {
+            e.HasKey(x => x.PrivilegeId);
+            e.HasIndex(x => x.OwnerId);
+            e.HasMany(x => x.UsageRecords)
+             .WithOne()
+             .HasForeignKey(u => u.PrivilegeId);
+        });
+
+        modelBuilder.Entity<PrivilegeUsageEntity>(e =>
+        {
+            e.HasKey(x => x.UsageId);
+            e.Property(x => x.SavedAmount).HasPrecision(18, 2);
+        });
+    }
+}
