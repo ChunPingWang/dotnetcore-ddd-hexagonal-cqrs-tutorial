@@ -26,6 +26,8 @@ public sealed class BankDbContext : DbContext
             e.HasIndex(x => x.AccountId);
             e.Property(x => x.Amount).HasPrecision(18, 2);
             e.Property(x => x.TwdEquivalent).HasPrecision(18, 2);
+            // 交易日期不帶時區語意，避免 Npgsql 將 DateTime 對應為 timestamptz（要求 UTC）
+            e.Property(x => x.TransactionDate).HasColumnType("timestamp without time zone");
         });
 
         modelBuilder.Entity<PrivilegeEntity>(e =>

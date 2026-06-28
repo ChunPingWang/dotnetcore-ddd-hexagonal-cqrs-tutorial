@@ -502,6 +502,28 @@ dotnet run --project src/BankAccountQuery.Api
 # 預設啟動後會自動以種子資料填入 In-Memory 資料庫
 ```
 
+啟動後可用的維運端點：
+- **Swagger UI**：`/swagger`（含 JWT 授權按鈕）
+- **Health Check**：`/health`（含資料庫探針，輸出 JSON）
+- **Prometheus 指標**：`/metrics`
+
+### 改用真實 PostgreSQL（可選）
+預設用 In-Memory；把 `Database:Provider` 設為 `Postgres` 即切換（啟動時自動套用 Migration）：
+
+```bash
+# 1) 啟動一個 PostgreSQL（以 Docker/Podman 為例）
+docker run -d --name bankpg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=bankdb -p 5432:5432 postgres:16
+
+# 2) 以 Postgres 供應者啟動（環境變數覆寫設定）
+Database__Provider=Postgres \
+ConnectionStrings__BankDb="Host=localhost;Port=5432;Database=bankdb;Username=postgres;Password=postgres" \
+dotnet run --project src/BankAccountQuery.Api
+```
+
+Migration 位於 `Infrastructure/Adapters/Out/Persistence/Migrations/`；
+新增 Migration：`dotnet ef migrations add <Name> --project src/BankAccountQuery.Infrastructure`
+（設計階段固定使用 Npgsql，見 `BankDbContextDesignTimeFactory`）。
+
 ### 呼叫端點（需要 JWT）
 本專案用對稱金鑰（HS256）簽 JWT，開發金鑰寫在 `appsettings.json`。
 下面這段 bash 可以產生一個客戶 `C001` 的測試 token：
@@ -621,13 +643,20 @@ dotnet test tests/BankAccountQuery.BddTests
 ## 13. 尚未實作的部分
 
 本專案同時涵蓋**讀取側（Query）與寫入側（Command）**，後者示範了聚合不變量守護
-與領域事件。以下規劃中項目尚未落地，但架構已預留接縫：
+與領域事件。
 
-- **真實資料庫 Adapter**：目前用 EF Core In-Memory；可替換為 PostgreSQL（Npgsql）。
+**已補上**（原規劃的延伸，現已實作並驗證）：
+- ✅ **PostgreSQL（Npgsql）+ EF Migrations**：以 `Database:Provider` 切換，預設仍為 InMemory。
+- ✅ **Swagger / OpenAPI**：`/swagger`（含 JWT 設定）。
+- ✅ **Health Checks**：`/health` 含資料庫探針。
+- ✅ **OpenTelemetry + Prometheus**：`/metrics`。
+
+**仍未落地**（架構已預留接縫）：
 - **Redis 快取 Decorator**：`PrivilegeCacheAdapter` 包裝 `PrivilegeEfCoreAdapter`。
 - **Core Banking HTTP Adapter**：以 `HttpClient` 串接核心系統。
-- **整合事件 / Outbox**：將領域事件可靠地發布到訊息佇列（目前僅行程內派發）。
-- **可觀測性**：OpenTelemetry + Prometheus、Health Checks。
+- **整合事件 / Outbox**：將領域事件可靠地發布到訊息佇列（目前僅行程內派發、
+  且與資料庫寫入非單一交易）。
+- **Testcontainers / WireMock 整合測試**、**CI Pipeline（GitHub Actions）**。
 - **BDD 活文件報告**：以 Reqnroll 產出 LivingDoc HTML 報告。
 
 ---
